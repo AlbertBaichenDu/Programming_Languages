@@ -1,0 +1,746 @@
+---
+title: "cleaning_ABD"
+author: "Albert, Xiaoyu"
+date: '2022-06-06'
+output: html_document
+---
+
+# Library
+```{r setup, include = TRUE, warning = FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  comment = "#>"
+)
+library(knitr)
+library(tidyverse)
+library(here)
+library(broom)
+library(broom.mixed)
+library(writexl)
+library(ggpubr)
+library(gghighlight)
+library(lme4)
+library(lmerTest)
+library(fs)
+
+```
+
+## Note from Albert for your reference :)
+This version cancels the process within each function that identifies which pattern participants chose. Instead, it only processes which key participants have pressed. It later imports the condition files we use in the experiment to identify regular/random pattern. Also, by changing all f (or FALSE, as coerced by R) and j to f_key and j_key, there will be no (or very few) NA value in the choice column.
+
+# Data
+```{r}
+list_study1 <- dir_ls(here("data", "data_fixed", "study1"), regexp = ".csv$")
+list_study2 <- dir_ls(here("data", "data_fixed", "study2"), regexp = ".csv$")
+list_study3 <- dir_ls(here("data", "data_fixed", "study3"), regexp = ".csv$")
+list_study4 <- dir_ls(here("data", "data_fixed","study4"), regexp = ".csv$")
+```
+
+# Cleaning Function for Study 1 and 2
+```{r}
+cleanup12 <- function(csvfile){
+  
+  # read in raw data from the data list
+  raw_data <- read_csv(csvfile) %>% 
+    select(-key_resp_23.keys)
+  
+  
+  # clean the training phase data
+  training <- 
+    raw_data %>% 
+    select(posgreen,
+           posyellow,
+           participant,
+           date,
+           expName,
+           exp_item_num = item_num,
+           phase = item_type,
+           exp_green_sg = green_stem,
+           exp_green_pl = green_full,
+           exp_yellow_sg = yellow_stem,
+           exp_yellow_pl = yellow_full,
+           exp_choice_key = planet_selector_key_training.keys,
+           exp_rt = planet_selector_key_training.rt,
+           exp_trial_order = trials_7.thisN,
+           round = training_num) %>% 
+    fill(c("posgreen", "posyellow"), .direction = "down") %>% 
+    mutate(across(posgreen:posyellow,
+                  ~ str_extract(.x, "(?<=\\[).+(?=\\,)"))) %>% 
+    mutate(f_choice = case_when(
+      posgreen < 0 ~ "green",
+      posgreen > 0 ~ "yellow"
+    ),
+    j_choice = case_when(
+      posgreen < 0 ~ "yellow",
+      posgreen > 0 ~ "green"
+    )) %>% 
+    relocate(f_choice, .before = "participant") %>% 
+    relocate(j_choice, .after = "f_choice") %>% 
+    fill(round, .direction = "up") %>% 
+    mutate(exp_choice_key = lag(exp_choice_key),
+           exp_rt = lag(exp_rt),
+           exp_trial_order = exp_trial_order + 1) %>%
+    filter(phase == "training") %>% 
+    mutate(exp_choice_planet = case_when(
+      exp_choice_key == "f" ~ f_choice,
+      exp_choice_key == "j" ~ j_choice
+    )) %>% 
+    relocate(phase, round, exp_trial_order, .before = exp_item_num) %>% 
+    relocate(exp_choice_planet, .before = exp_rt)
+
+  # Fixed_1
+  training$exp_choice_key <- as.character(training$exp_choice_key)
+  
+  
+  # clean the phonotactics test phase data
+  phono_test <-
+    raw_data %>% 
+    select(
+      posgreen,
+      posyellow,
+      expName,
+      participant,
+      date,
+      phono_test_item_num = item_num,
+      phono_test_choice_key = key_resp_21.keys,
+      phase = stage,
+      phono_choice_A = choice_A,
+      phono_choice_A_property = choice_A_property,
+      phono_choice_B = choice_B,
+      phono_choice_B_property = choice_B_property,
+      phono_choice_rt = key_resp_21.rt,
+      # phono_next_rt = key_resp_21.rt,
+      item_type
+    ) %>% 
+    fill(c("posgreen", "posyellow"), .direction = "down") %>% 
+    mutate(across(posgreen:posyellow,
+                  ~ str_extract(.x, "(?<=\\[).+(?=\\,)"))) %>% 
+    mutate(f_choice = case_when(
+      posgreen < 0 ~ "choice_A",
+      posgreen > 0 ~ "choice_B"
+    ),
+    j_choice = case_when(
+      posgreen < 0 ~ "choice_B",
+      posgreen > 0 ~ "choice_A"
+    )) %>% 
+    relocate(f_choice, .before = "participant") %>% 
+    relocate(j_choice, .after = "f_choice") %>%
+    fill(item_type, .direction = "up") %>% 
+    filter(is.na(item_type)) %>% 
+    mutate(phono_test_choice_key = lag(phono_test_choice_key),
+           phono_choice_rt = lag(phono_choice_rt)
+           ) %>% 
+    fill(phase, .direction = "up") %>% 
+    filter(phase == "phono_test") %>% 
+    select(posgreen:phono_choice_rt) %>% 
+    filter(!is.na(phono_test_item_num)) %>% 
+    mutate(phono_test_trial_order = c(1:8),
+           phono_old_new = case_when(
+             str_detect(phono_choice_A, "s|f") ~ "new",
+             TRUE ~ "old"
+           ),
+           phono_choice = case_when(
+             phono_test_choice_key == "f" ~ f_choice,
+             phono_test_choice_key == "j" ~ j_choice
+           )) %>% 
+    mutate(phono_choice = case_when(
+      phono_choice == "choice_A" ~ phono_choice_A,
+      phono_choice == "choice_B" ~ phono_choice_B
+    )) %>% 
+    relocate(expName, 
+             phase, 
+             phono_test_trial_order,
+             phono_test_item_num,
+             phono_old_new,
+             phono_choice_A,
+             phono_choice_B,
+             phono_test_choice_key,
+             phono_choice,
+             phono_choice_rt,
+             # phono_next_rt,
+             .after = date)
+  # Fixed 2
+  phono_test$phono_test_choice_key <- as.character(phono_test$phono_test_choice_key)
+  
+  
+  
+  # clean the alternation test phase data
+  alt_test <-
+    raw_data %>% 
+    select(
+      posgreen,
+      posyellow,
+      participant,
+      date,
+      expName,
+      phase = stage,
+      alt_test_item_num = item_num,
+      alt_choice_A = choice_A,
+      alt_choice_A_property = choice_A_property,
+      alt_choice_B = choice_B,
+      alt_choice_B_property = choice_B_property,
+      alt_test_choice_key = key_resp_15.keys,
+      alt_choice_rt = key_resp_15.rt,
+      # alt_next_rt = key_resp_3.rt,
+      item_type
+    ) %>%
+    fill(c("posgreen", "posyellow"), .direction = "down") %>% 
+    mutate(across(posgreen:posyellow,
+                  ~ str_extract(.x, "(?<=\\[).+(?=\\,)"))) %>% 
+    mutate(f_choice = case_when(
+      posgreen < 0 ~ "choice_A",
+      posgreen > 0 ~ "choice_B"
+    ),
+    j_choice = case_when(
+      posgreen < 0 ~ "choice_B",
+      posgreen > 0 ~ "choice_A"
+    )) %>% 
+    relocate(f_choice, .before = "participant") %>% 
+    relocate(j_choice, .after = "f_choice") %>%
+    fill(item_type, .direction = "up") %>% 
+    filter(is.na(item_type)) %>% 
+    mutate(alt_test_choice_key = lag(alt_test_choice_key),
+           alt_choice_rt = lag(alt_choice_rt)
+           ) %>%
+    fill(phase, .direction = "up") %>% 
+    filter(phase == "alt_test") %>% 
+    select(posgreen:alt_choice_rt) %>% 
+    filter(!is.na(alt_test_item_num)) %>% 
+    mutate(alt_test_trial_order = c(1:12),
+           alt_old_new = case_when(
+             str_detect(alt_choice_A, "s|f") ~ "new",
+             TRUE ~ "old"
+           ),
+           alt_choice = case_when(
+             alt_test_choice_key == "f" ~ f_choice,
+             alt_test_choice_key == "j" ~ j_choice
+           )) %>% 
+    mutate(alt_choice = case_when(
+      alt_choice == "choice_A" ~ alt_choice_A,
+      alt_choice == "choice_B" ~ alt_choice_B
+    )) %>% 
+    relocate(alt_test_trial_order, .before = alt_test_item_num) %>% 
+    relocate(alt_old_new, .after = alt_test_item_num) %>% 
+    relocate(alt_choice, .after = alt_test_choice_key)
+  # Fixed 3
+  alt_test$alt_test_choice_key <- as.character(alt_test$alt_test_choice_key)
+  phono_test$phono_test_choice_key <- as.character(phono_test$phono_test_choice_key)
+  training$exp_choice_key <- as.character(training$exp_choice_key)
+  
+  # combine the three phases
+  full_ <-
+    full_join(training, phono_test, by = c("posgreen",
+                                           "posyellow",
+                                           "f_choice",
+                                           "j_choice",
+                                           "participant", 
+                                           "date",
+                                           "expName",
+                                           "phase")) %>% 
+    full_join(alt_test, by = c("posgreen",
+                               "posyellow",
+                               "f_choice",
+                               "j_choice",
+                               "participant", 
+                               "date",
+                               "expName",
+                               "phase")) %>% 
+    mutate(
+      exp_choice_key = case_when(
+        exp_choice_key == "f" | exp_choice_key == "FALSE"~"f_key",
+        exp_choice_key == "j"~"j_key"
+      )) %>% 
+    mutate(
+      alt_test_choice_key = case_when(
+        alt_test_choice_key == "f" | alt_test_choice_key == "FALSE"~"f_key",
+        alt_test_choice_key == "j"~"j_key"
+      )
+    ) %>% 
+    mutate(
+      phono_test_choice_key = case_when(
+        phono_test_choice_key == "f" | phono_test_choice_key == "FALSE"~"f_key",
+        phono_test_choice_key == "j" ~ "j_key"
+      )
+    )
+  
+}
+```
+
+# Clearing Function for Study 3 and 4
+```{r}
+cleanup34 <- function(csvfile){
+  
+  # read in raw data from the data list
+  raw_data <- read_csv(csvfile) %>% 
+    select(-key_resp_23.keys)
+  
+  
+  # clean the training phase data
+  training <- 
+    raw_data %>% 
+    select(posgreen,
+           posyellow,
+           participant,
+           date,
+           expName,
+           imp_item_num = item_num,
+           phase = item_type,
+           imp_green_choice = green_all,
+           imp_green_stem = green_stem,
+           imp_green_property = green_property,
+           imp_yellow_choice = yellow_all,
+           imp_yellow_stem = yellow_stem,
+           imp_yellow_property = yellow_property,
+           imp_stimuli_type = stimuli_type,
+           imp_choice_key = planet_selector_key_training.keys,
+           imp_rt = planet_selector_key_training.rt,
+           imp_trial_order = trials_7.thisN,
+           round = training_num) %>% 
+    fill(c("posgreen", "posyellow"), .direction = "down") %>% 
+    mutate(across(posgreen:posyellow,
+                  ~ str_extract(.x, "(?<=\\[).+(?=\\,)"))) %>% 
+    mutate(f_choice = case_when(
+      posgreen < 0 ~ "green",
+      posgreen > 0 ~ "yellow"
+    ),
+    j_choice = case_when(
+      posgreen < 0 ~ "yellow",
+      posgreen > 0 ~ "green"
+    )) %>% 
+    relocate(f_choice, .before = "participant") %>% 
+    relocate(j_choice, .after = "f_choice") %>% 
+    fill(round, .direction = "up") %>% 
+    mutate(imp_choice_key = lag(imp_choice_key),
+           imp_rt = lag(imp_rt),
+           imp_trial_order = imp_trial_order + 1) %>%
+    filter(phase == "training") %>% 
+    mutate(imp_choice_planet = case_when(
+      imp_choice_key == "f" ~ f_choice,
+      imp_choice_key == "j" ~ j_choice
+    )) %>% 
+    relocate(phase, round, imp_trial_order, .before = imp_item_num) %>% 
+    relocate(imp_choice_planet, .before = imp_rt)
+  
+  training$imp_choice_key <- as.character(training$imp_choice_key)
+  
+  # clean the phonotactics test phase data
+  phono_test <-
+    raw_data %>% 
+    select(
+      posgreen,
+      posyellow,
+      expName,
+      participant,
+      date,
+      phono_test_item_num = item_num,
+      phono_test_choice_key = key_resp_21.keys,
+      phase = stage,
+      phono_choice_A = choice_A,
+      phono_choice_A_property = choice_A_property,
+      phono_choice_B = choice_B,
+      phono_choice_B_property = choice_B_property,
+      phono_choice_rt = key_resp_21.rt,
+      # phono_next_rt = key_resp_21.rt,
+      item_type
+    ) %>% 
+    fill(c("posgreen", "posyellow"), .direction = "down") %>% 
+    mutate(across(posgreen:posyellow,
+                  ~ str_extract(.x, "(?<=\\[).+(?=\\,)"))) %>% 
+    mutate(f_choice = case_when(
+      posgreen < 0 ~ "choice_A",
+      posgreen > 0 ~ "choice_B"
+    ),
+    j_choice = case_when(
+      posgreen < 0 ~ "choice_B",
+      posgreen > 0 ~ "choice_A"
+    )) %>% 
+    relocate(f_choice, .before = "participant") %>% 
+    relocate(j_choice, .after = "f_choice") %>%
+    fill(item_type, .direction = "up") %>% 
+    filter(is.na(item_type)) %>% 
+    mutate(phono_test_choice_key = lag(phono_test_choice_key),
+           phono_choice_rt = lag(phono_choice_rt)
+           ) %>% 
+    fill(phase, .direction = "up") %>% 
+    filter(phase == "phono_test") %>% 
+    select(posgreen:phono_choice_rt) %>% 
+    filter(!is.na(phono_test_item_num)) %>% 
+    mutate(phono_test_trial_order = c(1:8),
+           phono_old_new = case_when(
+             str_detect(phono_choice_A, "s|f") ~ "new",
+             TRUE ~ "old"
+           ),
+           phono_choice = case_when(
+             phono_test_choice_key == "f" ~ f_choice,
+             phono_test_choice_key == "j" ~ j_choice
+           )) %>% 
+    mutate(phono_choice = case_when(
+      phono_choice == "choice_A" ~ phono_choice_A,
+      phono_choice == "choice_B" ~ phono_choice_B
+    )) %>% 
+    relocate(expName, 
+             phase, 
+             phono_test_trial_order,
+             phono_test_item_num,
+             phono_old_new,
+             phono_choice_A,
+             phono_choice_A_property,
+             phono_choice_B,
+             phono_choice_B_property,
+             phono_test_choice_key,
+             phono_choice,
+             phono_choice_rt,
+             # phono_next_rt,
+             .after = date)
+  
+  phono_test$phono_test_choice_key <- as.character(phono_test$phono_test_choice_key)
+  
+  # clean the alternation test phase data
+  alt_test <-
+    raw_data %>% 
+    select(
+      posgreen,
+      posyellow,
+      participant,
+      date,
+      expName,
+      phase = stage,
+      alt_test_item_num = item_num,
+      alt_choice_A = choice_A,
+      alt_choice_A_property = choice_A_property,
+      alt_choice_B = choice_B,
+      alt_choice_B_property = choice_B_property,
+      alt_test_choice_key = key_resp_15.keys,
+      alt_choice_rt = key_resp_15.rt,
+      # alt_next_rt = key_resp_3.rt,
+      item_type
+    ) %>%
+    fill(c("posgreen", "posyellow"), .direction = "down") %>% 
+    mutate(across(posgreen:posyellow,
+                  ~ str_extract(.x, "(?<=\\[).+(?=\\,)"))) %>% 
+    mutate(f_choice = case_when(
+      posgreen < 0 ~ "choice_A",
+      posgreen > 0 ~ "choice_B"
+    ),
+    j_choice = case_when(
+      posgreen < 0 ~ "choice_B",
+      posgreen > 0 ~ "choice_A"
+    )) %>% 
+    relocate(f_choice, .before = "participant") %>% 
+    relocate(j_choice, .after = "f_choice") %>%
+    fill(item_type, .direction = "up") %>% 
+    filter(is.na(item_type)) %>% 
+    mutate(alt_test_choice_key = lag(alt_test_choice_key),
+           alt_choice_rt = lag(alt_choice_rt)
+           ) %>%
+    fill(phase, .direction = "up") %>% 
+    filter(phase == "alt_test") %>% 
+    select(posgreen:alt_choice_rt) %>% 
+    filter(!is.na(alt_test_item_num)) %>% 
+    mutate(alt_test_trial_order = c(1:12),
+           alt_old_new = case_when(
+             str_detect(alt_choice_A, "s|f") ~ "new",
+             TRUE ~ "old"
+           ),
+           alt_choice = case_when(
+             alt_test_choice_key == "f" ~ f_choice,
+             alt_test_choice_key == "j" ~ j_choice
+           )) %>% 
+    mutate(alt_choice = case_when(
+      alt_choice == "choice_A" ~ alt_choice_A,
+      alt_choice == "choice_B" ~ alt_choice_B
+    ),
+    alt_choice_property = case_when(
+      alt_choice == alt_choice_A ~ alt_choice_A_property,
+      alt_choice == alt_choice_B ~ alt_choice_B_property
+    )) %>% 
+    relocate(alt_test_trial_order, .before = alt_test_item_num) %>% 
+    relocate(alt_old_new, .after = alt_test_item_num) %>% 
+    relocate(alt_choice, .after = alt_test_choice_key)
+  
+  alt_test$alt_test_choice_key <- as.character(alt_test$alt_test_choice_key)
+  
+  # fixing character/logical issue
+  training$imp_choice_key <- as.character(training$imp_choice_key)
+  phono_test$phono_test_choice_key <- as.character(phono_test$phono_test_choice_key)
+  alt_test$alt_test_choice_key <- as.character(alt_test$alt_test_choice_key)
+  
+  # combine the three phases
+  full_ <-
+    full_join(training, phono_test, by = c("posgreen",
+                                           "posyellow",
+                                           "f_choice",
+                                           "j_choice",
+                                           "participant", 
+                                           "date",
+                                           "expName",
+                                           "phase")) %>% 
+    full_join(alt_test, by = c("posgreen",
+                               "posyellow",
+                               "f_choice",
+                               "j_choice",
+                               "participant", 
+                               "date",
+                               "expName",
+                               "phase")) %>% 
+    mutate(
+      imp_choice_key = case_when(
+        imp_choice_key == "f" | imp_choice_key == "FALSE"~"f_key",
+        imp_choice_key == "j"~"j_key"
+      )) %>% 
+    mutate(
+      alt_test_choice_key = case_when(
+        alt_test_choice_key == "f" | alt_test_choice_key == "FALSE"~"f_key",
+        alt_test_choice_key == "j"~"j_key"
+      )
+    ) %>% 
+    mutate(
+      phono_test_choice_key = case_when(
+        phono_test_choice_key == "f" | phono_test_choice_key == "FALSE"~"f_key",
+        phono_test_choice_key == "j" ~ "j_key"
+      )
+    )
+}
+```
+
+# Running the functions for each of the studies
+```{r}
+study1_full <- purrr::map_dfr(list_study1, cleanup12)
+study2_full <- purrr::map_dfr(list_study2, cleanup12)
+study3_full <- purrr::map_dfr(list_study3, cleanup34)
+study4_full <- purrr::map_dfr(list_study4, cleanup34)
+```
+
+# Post-cleaning Processing
+```{r}
+# Merge dfs together
+full_cleanup <- 
+  full_join(study1_full, study2_full) %>% 
+  full_join(study3_full) %>% 
+  full_join(study4_full) 
+```
+
+# Rename expName with study_name
+```{r}
+full_cleanup <- rename(full_cleanup, c("study_name" = "expName"))
+```
+
+# Relocate implicit exp after explicit exp
+```{r}
+full_cleanup <-
+  full_cleanup %>% 
+  relocate(imp_trial_order:imp_rt, .after = exp_rt) 
+```
+
+# Add a column of study mode
+```{r}
+full_cleanup <- full_cleanup %>% 
+  mutate(mode = case_when(
+    study_name == "study_1" ~ "explicit",
+    study_name == "study_2" ~ "explicit",
+    study_name == "study_3" ~ "implicit",
+    study_name == "study_4" ~ "implicit"
+  )) %>% 
+  relocate(mode, .before = study_name)
+```
+
+# Save the final version of the cleanup file
+```{r}
+write.csv(full_cleanup, here("data", "cleaned", paste0("full_cleanup_albert_", Sys.Date(), ".csv")))
+```
+
+# Add indication of exact trial of a single training session
+## For tracing the decisions made by each of the participants in the training phase
+```{r}
+full_cleanup_training <- full_cleanup %>% 
+  filter(phase == "training") %>% 
+  group_by(participant) %>% 
+  mutate(overall_trial_order = row_number()) %>% 
+  relocate(overall_trial_order, .before = exp_green_sg)
+```
+
+# Further clean up
+```{r}
+data <- full_cleanup_training
+```
+
+## Training Part
+### Select useful columns for each of the studies
+```{r}
+# For study 1 and 2
+study12_training <- data %>% 
+  filter(study_name %in% c("study_1", "study_2"), phase == "training") %>% 
+  select(posgreen, posyellow, f_choice, j_choice, study_name, mode, participant, date, phase, round, exp_trial_order, 
+         exp_item_num, overall_trial_order , exp_rt, exp_choice_planet,
+         exp_choice_key) %>% 
+  rename(
+    trial_order = exp_trial_order,
+    rt = exp_rt,
+    choice_planet = exp_choice_planet,
+    trial_order = exp_trial_order,
+    item_num = exp_item_num,
+    choice_key = exp_choice_key
+  ) %>% 
+  mutate(choice = case_when(
+      choice_key == "f_key"&f_choice == "green" ~ "regular",
+      choice_key == "j_key"&j_choice == "green" ~ "regular",
+      choice_key == "f_key"&f_choice == "yellow" ~ "random",
+      choice_key == "j_key"&j_choice == "yellow" ~ "random"
+    )
+  )
+
+# For study 3 and 4
+study34_training <- data %>% 
+  filter(study_name %in% c("study_3", "study_4"), phase == "training") %>% 
+  select(posgreen, posyellow, f_choice, j_choice, study_name, mode, participant, date, phase, round, imp_trial_order, 
+         imp_item_num, overall_trial_order, imp_rt, imp_choice_planet,
+         imp_choice_key) %>% 
+  rename(
+    trial_order = imp_trial_order,
+    rt = imp_rt,
+    choice_planet = imp_choice_planet,
+    trial_order = imp_trial_order,
+    item_num = imp_item_num,
+    choice_key = imp_choice_key
+  ) %>% 
+  mutate(choice = case_when(
+    choice_key == "f_key"&f_choice == "green" ~ "regular",
+    choice_key == "j_key"&j_choice == "green" ~ "regular",
+    choice_key == "f_key"&f_choice == "yellow" ~ "random",
+    choice_key == "j_key"&j_choice == "yellow" ~ "random"
+  )
+  ) 
+
+training_1 <- read.csv(here("data", "condition_files", "training_study_1.csv")) %>% 
+  mutate(study_name = "study_1")
+training_2<- read.csv(here("data", "condition_files", "training_study_2.csv")) %>% 
+  mutate(study_name = "study_2")
+training_12 <- rbind(training_1, training_2) %>% 
+  separate(green_full, into = c("green_stem", "green_suffix")) %>% 
+  separate(yellow_full, into = c("yellow_stem", "yellow_suffix")) %>% 
+  relocate(study_name, .before = green_stem) %>% 
+  mutate(item_sgpl = "sgpl")
+training_3<- read.csv(here("data", "condition_files", "training_study_3.csv")) %>% 
+  mutate(study_name = "study_3")
+training_4<- read.csv(here("data", "condition_files", "training_study_4.csv")) %>% 
+  mutate(study_name = "study_4")
+training_34 <- rbind(training_3, training_4) %>% 
+  separate(green_all, into = c("green_stem", "green_suffix"), sep = "-.*?") %>% 
+  separate(yellow_all, into = c("yellow_stem", "yellow_suffix"), sep = "-.*?") %>% 
+  relocate(study_name, .before = green_stem) %>% 
+  select(item_num, item_type, study_name, green_stem, green_suffix, yellow_stem, yellow_suffix,
+         stimuli_type) %>% 
+  mutate(item_sgpl = stimuli_type) %>% 
+  select(-stimuli_type)
+
+training_condition <- rbind(training_12, training_34) %>% 
+  rename('regular_stem' = "green_stem",
+         'regular_suffix' = "green_suffix",
+         'random_stem' = 'yellow_stem',
+         'random_suffix' = 'yellow_suffix')
+```
+
+## Join two dfs of the training part
+```{r}
+study_training <- rbind(study12_training, study34_training) %>% 
+  mutate(item_type = "training") %>% 
+  select(-choice_planet)
+
+study_training <- study_training %>% 
+  left_join(training_condition, by = c("study_name", "item_num")) %>% 
+  mutate(item = )
+```
+
+## Testing Part
+### Phono_testing
+```{r}
+study_phono_test <- full_cleanup %>% 
+  filter(phase == "phono_test") %>% 
+  select(posgreen, posyellow, f_choice, j_choice, study_name, mode, participant, 
+         date, phase, phono_test_trial_order, 
+         phono_test_item_num, phono_old_new, phono_choice_rt, phono_choice, phono_test_choice_key) %>% 
+  rename(trial_order = phono_test_trial_order,
+    item_num = phono_test_item_num,
+    item_type = phono_old_new,
+    rt = phono_choice_rt,
+    choice_key = phono_test_choice_key,
+    choice = phono_choice) %>% 
+  mutate(round = "phono_test") %>% 
+  mutate(overall_trial_order = trial_order)
+```
+
+# Using condition file to determine regular and random
+```{r}
+# Phono Testing
+testing_phono <- read_csv(here("data", "condition_files", "testing_phono.csv"))
+
+study_phono_test <- study_phono_test %>% 
+  left_join(testing_phono) %>% 
+  select(-c("choice_A", "choice_B", "choice_stimuli")) %>% 
+  mutate(choice = case_when(
+    choice_key == "f_key"&f_choice == "choice_A"&choice_A_property == "regular"~"regular",
+    choice_key == "f_key"&f_choice == "choice_A"&choice_A_property == "random"~"random",
+    choice_key == "f_key"&f_choice == "choice_B"&choice_B_property == "regular"~"regular",
+    choice_key == "f_key"&f_choice == "choice_B"&choice_B_property == "random"~"random",
+    choice_key == "j_key"&j_choice == "choice_A"&choice_A_property == "regular"~"regular",
+    choice_key == "j_key"&j_choice == "choice_A"&choice_A_property == "random"~"random",
+    choice_key == "j_key"&j_choice == "choice_B"&choice_B_property == "regular"~"regular",
+    choice_key == "j_key"&j_choice == "choice_B"&choice_B_property == "random"~"random",
+  )) %>% 
+  select(-c("choice_A_property", "choice_B_property"))
+
+study_full_1 <- rbind(study_phono_test, study_training) %>% 
+  arrange(match(phase, c("training", "phono_test", "alt_test")))
+
+# Alt_testing
+study_alt_test <- full_cleanup %>% 
+  filter(phase == "alt_test") %>% 
+  select(posgreen, posyellow, f_choice, j_choice, study_name, mode, participant, 
+         date, phase, alt_test_trial_order, 
+         alt_test_item_num, alt_old_new, alt_choice_property, alt_choice_rt,
+         alt_test_choice_key, alt_choice) %>% 
+  rename(trial_order = alt_test_trial_order,
+    item_num = alt_test_item_num,
+    item_type = alt_old_new,
+    choice = alt_choice,
+    choice_key = alt_test_choice_key,
+    rt = alt_choice_rt) %>% 
+  mutate(round = "alt_test") %>% 
+  mutate(overall_trial_order = trial_order)
+
+testing_alt <- read.csv(here("data", "condition_files", "testing_alt.csv"))
+
+study_alt_test <- study_alt_test %>% 
+  left_join(testing_alt) %>% 
+  select(-c("choice_A", "choice_B", "choice_stimuli")) %>% 
+  mutate(choice = case_when(
+    choice_key == "f_key"&f_choice == "choice_A"&choice_A_property == "regular"~"regular",
+    choice_key == "f_key"&f_choice == "choice_A"&choice_A_property == "random"~"random",
+    choice_key == "f_key"&f_choice == "choice_B"&choice_B_property == "regular"~"regular",
+    choice_key == "f_key"&f_choice == "choice_B"&choice_B_property == "random"~"random",
+    choice_key == "j_key"&j_choice == "choice_A"&choice_A_property == "regular"~"regular",
+    choice_key == "j_key"&j_choice == "choice_A"&choice_A_property == "random"~"random",
+    choice_key == "j_key"&j_choice == "choice_B"&choice_B_property == "regular"~"regular",
+    choice_key == "j_key"&j_choice == "choice_B"&choice_B_property == "random"~"random",
+  )) %>% 
+  select(-c("choice_A_property", "choice_B_property", "alt_choice_property"))
+```
+
+# Combine everything
+```{r}
+study_full_final <- 
+  rbind(study_full_1, study_alt_test) %>% 
+  relocate(c("item_type", "rt"), .after = overall_trial_order)
+```
+
+# Create dummy participant identifiers for a better view of the facets
+```{r}
+study_full_final <- study_full_final %>% 
+  arrange(participant) %>% 
+  mutate(participant_id = group_indices(., participant))
+```
+
+# Final Output
+```{r}
+write.csv(study_full_final, here("data", "cleaned", paste0("full_process_albert_", Sys.Date(), ".csv")))
+```

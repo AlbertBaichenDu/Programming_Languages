@@ -1,0 +1,182 @@
+---
+title: "na_fixing_albert"
+author: "Albert"
+date: '2022-06-10'
+output: html_document
+---
+
+# Library
+```{r setup, include = TRUE, warning = FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+library(here)
+library(fs)
+
+```
+
+# A description of the issue
+Due to unknown errors, Pavlovia records keyboard responses in two fashions:
+The first one is that participants' response (either f or j) to a particular trial is recorded in a separate row from their replay input, which is recorded as "r" in another line. 
+The second one is their f/j response is recorded in the same row, side by side with the replay response. 
+This causes our cleaning function wipe out their f and j response, resulting in 19 NA values. 
+This script is intended to pick out the irregularly, storing csv files and fixing them.
+
+# Check NA in training/phono_test/alt_test choices
+## Check choices that contain na values
+```{r}
+study_full_final <- read.csv(here("data", "cleaned", "full_process_albert.csv"))
+nas <- study_full_final %>% 
+  filter(is.na(choice)) 
+nas
+```
+
+## Find Participants that made these choices
+```{r}
+na_participants <- unique(nas$participant)
+na_participants
+```
+
+## Construct File Names that Pavlovia Recorded
+```{r}
+na_participants <- study_full_final %>% 
+  filter(is.na(choice)) %>% 
+  select(participant, study_name, date) %>% 
+  group_by(participant, study_name) %>% 
+  unique() %>% 
+  mutate(file_prefix = str_remove_all(participant, ":"),
+         file_infix = study_name, 
+         file_suffix = date) %>% 
+  mutate(file_name = paste0(file_prefix, "_", file_infix, "_", file_suffix)) %>% 
+  mutate(file_name = paste0(file_name, ".csv")) %>% 
+  mutate(file_name = str_remove_all(file_name, "[+]")) %>% 
+  ungroup() %>% 
+  select(file_name, study_name)
+```
+
+## Move these files to a separate folder for later automatic processing and visual inspection
+### Define a function for moving irregular files
+```{r}
+library(fs)
+find_na_participants <- function(study){
+  study_folder = str_remove(study, "_")
+  files <- na_participants %>% 
+    filter(study_name == study)
+  
+  files_list <- unlist(files)
+  
+  oldDir <- here("data", 
+                 "data_finished", 
+                 paste0(study_folder, "/"))
+  dir.create(here("data", 
+                  "na_participants", 
+                  paste0(study_folder, "/")))
+  newDir = here("data", 
+                "na_participants", 
+                paste0(study_folder, "/"))
+  
+  for (i in 1:length(files_list)){
+  file.copy(
+    from = paste0(oldDir, files_list[i]), 
+    to = paste0(newDir, files_list[i]), 
+    overwrite = TRUE, 
+    recursive = FALSE, 
+    copy.mode = FALSE, 
+    copy.date = FALSE)
+}
+}
+```
+
+### Excute the function with all studies
+```{r}
+find_na_participants(study = "study_1")
+find_na_participants(study = "study_2")
+find_na_participants(study = "study_3")
+find_na_participants(study = "study_4")
+```
+
+# Set up a function to fix the issue described
+```{r}
+library(tidyverse)
+
+fix_na <- function(study){
+  files <- 
+    na_participants %>% 
+    filter(study_name == study) %>% 
+    select(-study_name)
+  
+  files_list <-    unlist(files)
+  study_folder <-  str_remove_all(study, "_")
+  
+  dir.create(here("data", 
+                  "data_fixed", 
+                  "na_fixed", 
+                   study_folder))
+  
+    for (i in 1:length(files_list)){
+      
+      raw_data <-  read.csv(here("data", 
+                                 "na_participants", 
+                                  study_folder, 
+                                  files_list[i]))
+      fixed <- 
+        raw_data %>% 
+        mutate(sliced = case_when(
+          key_resp_22.keys == "space" & key_resp_21.keys == ""~"yes",
+          key_resp_3.keys == "space" & key_resp_15.keys == ""~"yes",
+          key_resp_20.keys == "r" & key_resp_21.keys == ""~"yes",
+          key_resp_23.keys == "r" & key_resp_15.keys == ""~"yes"
+        )) %>% 
+        filter(is.na(sliced)|!sliced == "yes")
+      
+       write_csv(fixed, 
+                 here("data", 
+                      "data_fixed", 
+                      "na_fixed", 
+                       study_folder, 
+                       files_list[i]))
+  }
+}
+```
+
+## Apply the function with all the studies
+```{r}
+fix_na(study = 'study_1')
+fix_na(study = 'study_2')
+fix_na(study = 'study_3')
+fix_na(study = 'study_4')
+```
+
+## Set up a function to move back all fixed files
+```{r}
+put_back_na <- function(study){
+  study_folder = str_remove(study, "_")
+  files <- na_participants %>% 
+    filter(study_name == study)
+  files_list <- unlist(files)
+  newDir <- here("data", 
+                 "data_fixed", 
+                 paste0(study_folder, "/"))
+  oldDir = here("data", 
+                "data_fixed", 
+                "na_fixed", 
+                paste0(study_folder, "/"))
+  for (i in 1:length(files_list)){
+  file.copy(
+    from = paste0(oldDir, files_list[i]), 
+    to = paste0(newDir, files_list[i]), 
+    overwrite = TRUE, 
+    recursive = FALSE, 
+    copy.mode = FALSE, 
+    copy.date = FALSE)
+}
+}
+```
+
+## Move things back
+```{r}
+put_back_na("study_1")
+put_back_na("study_2")
+put_back_na("study_3")
+put_back_na("study_4")
+```

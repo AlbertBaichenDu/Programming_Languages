@@ -1,0 +1,493 @@
+---
+title: "regression_0616"
+author: "Albert"
+date: '2022-06-16'
+output:
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    df_print: paged
+    code_folding: hide
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(performance)
+library(here)
+library(lme4)
+library(lmerTest)
+library(tidyverse)
+library(broom)
+library(broom.mixed)
+```
+Adapted from Thomas' regression_0610.Rmd
+```{r}
+study <- read.csv(here("data", "new_cleaned_0610", "non_categorical_20220616_albert.csv"))
+```
+
+## Pre-modelling preprations
+### Mutate regularity
+#### Regularity: where, among the yellow (random) choice, does regular component exist
+```{r}
+study <- study %>% 
+  mutate(regularity =  case_when(
+    study_name == "study_1" | study_name == "study_3"~"phonotactics",
+    study_name == "study_2" | study_name == "study_4"~"alternation",
+  ))
+```
+# Modelling Training
+## Preprations
+### 1. as.factor()
+```{r}
+training_modelled <- study %>% 
+  mutate(participant =  factor(participant, exclude = c("", NA)),
+         study_name =   factor(study_name, exclude = c("", NA)),
+         mode =         factor(mode, exclude = c("", NA)),
+         phase =        factor(phase, exclude = c("", NA)),
+         item_num =     factor(item_num, exclude = c("", NA)),
+         training_choice = factor(training_choice, exclude = c("", NA)),
+         phono_choice = factor(phono_choice, exclude = c("", NA)),
+         alt_choice =   factor(alt_choice, exclude = c("", NA)),
+         round =        factor(round, exclude = c("", NA)),
+         regularity = factor(regularity, exclude = c("", NA))) %>% 
+  filter(phase == "training")
+```
+
+### 2. Change reference level to irregular choices, to have an easier interpretation
+```{r}
+training_modelled$training_choice <- 
+  relevel(training_modelled$training_choice, ref = "yellow")
+```
+
+### 3. Pre-modelling chekcing
+```{r}
+study %>% skimr::skim()
+```
+
+## Model 1: No interaction
+```{r}
+no_interaction <-
+  glmer(training_choice ~ round + regularity + mode + (1 | participant), 
+        data = training_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(no_interaction)
+check_collinearity(no_interaction)
+```
+
+## Model 2: round*regularity
+```{r}
+round_regularity_interaction <-
+  glmer(training_choice ~ round * regularity + mode + (1 | participant), 
+        data = training_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+
+summary(round_regularity_interaction)
+check_collinearity(round_regularity_interaction)
+```
+
+## Model 3: regularity*mode
+```{r}
+regularity_mode_interaction <-
+  glmer(training_choice ~ round + regularity * mode + (1 | participant), 
+        data = training_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+
+summary(regularity_mode_interaction)
+check_collinearity(regularity_mode_interaction)
+```
+
+## Model 4: mode*round
+```{r}
+mode_round_interaction <-
+  glmer(training_choice ~ regularity + mode * round + (1 | participant), 
+        data = training_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+
+summary(mode_round_interaction)
+check_collinearity(mode_round_interaction)
+```
+
+## Model 5: full interaction
+```{r}
+full_interaction <-
+  glmer(training_choice ~ round * regularity * mode + (1 | participant), 
+        data = training_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+
+summary(full_interaction)
+check_collinearity(full_interaction)
+```
+
+## Compare different models
+```{r}
+anova(full_interaction, no_interaction)
+
+anova(full_interaction, round_regularity_interaction)
+
+anova(full_interaction, regularity_mode_interaction)
+
+anova(full_interaction, mode_round_interaction)
+```
+
+## Full interaction
+```{r}
+summary(full_interaction)
+summary(mode_round_interaction)
+```
+
+# Modelling Testing Phases
+## Preparation of modelling testing phases
+Several things to be done here,
+
+### 1. as.factor()
+```{r}
+testing_modelled <- study %>% 
+  mutate(participant =  factor(participant, exclude = c("", NA)),
+         study_name =   factor(study_name, exclude = c("", NA)),
+         mode =         factor(mode, exclude = c("", NA)),
+         phase =        factor(phase, exclude = c("", NA)),
+         item_num =     factor(item_num, exclude = c("", NA)),
+         training_choice = factor(training_choice, exclude = c("", NA)),
+         phono_choice = factor(phono_choice, exclude = c("", NA)),
+         alt_choice =   factor(alt_choice, exclude = c("", NA)),
+         round =        factor(round, exclude = c("", NA)),
+         regularity = factor(regularity, exclude = c("", NA))) %>% 
+  filter(phase == "phono_test" | phase == "alt_test") 
+```
+
+### 2. change reference level
+```{r}
+testing_modelled$phono_choice <- relevel(testing_modelled$phono_choice, ref = "vd")
+testing_modelled$alt_choice <- relevel(testing_modelled$alt_choice, ref = "vd")
+```
+
+### 3. add another factor of regular% to link training and testing phases
+```{r}
+n_regular <- study %>% 
+  group_by(participant, phase, training_choice) %>% 
+  mutate(n = n()) %>% 
+  filter(phase == "training") %>% 
+  group_by(participant, phase) %>% 
+  mutate(n_all = n()) %>% 
+  select(participant, training_choice, phase, n, n_all) %>% 
+  distinct() %>% 
+  filter(training_choice == "green") %>% 
+  mutate(regular_percent = n/(n_all)) %>% 
+  ungroup() %>% 
+  select(participant, regular_percent)
+
+n_regular$regular_percent <- formatC(n_regular$regular_percent, digits = 9, format = "f")
+length(unique(n_regular$participant))
+
+testing_modelled <- testing_modelled %>% 
+  left_join(n_regular)
+testing_modelled$regular_percent <- as.numeric(testing_modelled$regular_percent)
+```
+
+# Modelling phono testing
+```{r}
+phono_modelled <- testing_modelled %>% 
+  filter(phase == "phono_test")
+```
+## Model Group 1: No correlation with choices in training phase
+### Model 1: No interaction
+```{r}
+no_interaction_phono <- 
+  glmer(phono_choice ~ regularity + mode+ item_type + (1 | participant) + (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(no_interaction_phono)
+check_collinearity(no_interaction_phono)
+```
+
+### Model 2: regularity*mode
+```{r}
+regularity_mode_phono <- 
+  glmer(phono_choice ~ regularity*mode+ item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_mode_phono)
+check_collinearity(regularity_mode_phono)
+```
+
+### Model 3: regularity*item_type
+```{r}
+regularity_type_phono <- 
+  glmer(phono_choice ~ mode+ regularity * item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_type_phono)
+check_collinearity(regularity_type_phono)
+```
+### Model 4: item_type*mode
+```{r}
+mode_type_phono <- 
+  glmer(phono_choice ~ regularity + mode * item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(mode_type_phono)
+check_collinearity(mode_type_phono)
+```
+
+### Model 5: full interaction
+```{r}
+full_interaction_phono <- 
+  glmer(phono_choice ~ regularity * mode * item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(full_interaction_phono)
+check_collinearity(full_interaction_phono)
+```
+
+### Compare different models
+```{r}
+anova(full_interaction_phono, mode_type_phono)
+anova(full_interaction_phono, regularity_type_phono)
+anova(full_interaction_phono, regularity_mode_phono)
+anova(full_interaction_phono, no_interaction_phono)
+```
+
+## Model Group 2: with correlation with training phase
+### Model 1: No interaction
+```{r}
+no_interaction_phono_cortraining <- 
+  glmer(phono_choice ~ regularity + mode+ item_type + regular_percent 
+        + (1 | participant)+ (1 + item_num | participant),
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(no_interaction_phono_cortraining)
+check_collinearity(no_interaction_phono_cortraining)
+```
+
+### Model 2: regularity*mode
+```{r}
+regularity_mode_phono_cortraining <- 
+  glmer(phono_choice ~ regularity*mode+ item_type +regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_mode_phono_cortraining)
+check_collinearity(regularity_mode_phono_cortraining)
+```
+
+### Model 3: regularity*item_type
+```{r}
+regularity_type_phono_cortraining <- 
+  glmer(phono_choice ~ mode+ regularity * item_type + regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_type_phono_cortraining)
+check_collinearity(regularity_type_phono_cortraining)
+```
+
+### Model 4: item_type*mode
+```{r}
+mode_type_phono_cortraining <- 
+  glmer(phono_choice ~ regularity + mode * item_type + regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(mode_type_phono_cortraining)
+check_collinearity(mode_type_phono_cortraining)
+```
+
+### Model 5: full interaction
+```{r}
+full_interaction_phono_cortraining <- 
+  glmer(phono_choice ~ regularity * mode * item_type + regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = phono_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(full_interaction_phono_cortraining)
+check_collinearity(full_interaction_phono_cortraining)
+```
+
+### Compare different models
+```{r}
+anova(full_interaction_phono_cortraining, mode_type_phono_cortraining)
+anova(full_interaction_phono_cortraining, regularity_type_phono_cortraining)
+anova(full_interaction_phono_cortraining, regularity_mode_phono_cortraining)
+anova(full_interaction_phono_cortraining, no_interaction_phono_cortraining)
+```
+
+# Modelling alt testing
+```{r}
+alt_modelled <- testing_modelled %>% 
+  filter(phase == "alt_test")
+```
+
+## Model Group 1: No correlation with choices in training phase
+### Model 1: No interaction
+```{r}
+no_interaction_alt <- 
+  glmer(alt_choice ~ regularity + mode+ item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(no_interaction_alt)
+check_collinearity(no_interaction_alt)
+```
+
+### Model 2: regularity*mode
+```{r}
+regularity_mode_alt <- 
+  glmer(alt_choice ~ regularity*mode+ item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_mode_alt)
+check_collinearity(regularity_mode_alt)
+```
+
+### Model 3: regularity*item_type
+```{r}
+regularity_type_alt <- 
+  glmer(alt_choice ~ mode+ regularity * item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_type_alt)
+check_collinearity(regularity_type_alt)
+```
+
+### Model 4: item_type*mode
+```{r}
+mode_type_alt <- 
+  glmer(alt_choice ~ regularity + mode * item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(mode_type_alt)
+check_collinearity(mode_type_alt)
+```
+
+### Model 5: full interaction
+```{r}
+full_interaction_alt <- 
+  glmer(alt_choice ~ regularity * mode * item_type + (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(full_interaction_alt)
+check_collinearity(full_interaction_alt)
+```
+
+### Compare different models
+```{r}
+anova(full_interaction_alt, mode_type_alt)
+anova(full_interaction_alt, regularity_type_alt)
+anova(full_interaction_alt, regularity_mode_alt)
+anova(full_interaction_alt, no_interaction_alt)
+```
+
+## Model Group 2: with correlation with training phase
+### Model 1: No interaction
+```{r}
+no_interaction_alt_cortraining <- 
+  glmer(alt_choice ~ regularity + mode+ item_type + regular_percent 
+        + (1 | participant)+ (1 + item_num | participant),
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(no_interaction_alt_cortraining)
+check_collinearity(no_interaction_alt_cortraining)
+```
+
+### Model 2: regularity*mode
+```{r}
+regularity_mode_alt_cortraining <- 
+  glmer(alt_choice ~ regularity*mode+ item_type +regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_mode_alt_cortraining)
+check_collinearity(regularity_mode_alt_cortraining)
+```
+
+### Model 3: regularity*item_type
+```{r}
+regularity_type_alt_cortraining <- 
+  glmer(alt_choice ~ mode+ regularity * item_type + regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(regularity_type_alt_cortraining)
+check_collinearity(regularity_type_alt_cortraining)
+```
+
+### Model 4: item_type*mode
+```{r}
+mode_type_alt_cortraining <- 
+  glmer(alt_choice ~ regularity + mode * item_type + regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(mode_type_alt_cortraining)
+check_collinearity(mode_type_alt_cortraining)
+```
+
+### Model 5: full interaction
+```{r}
+full_interaction_alt_cortraining <- 
+  glmer(alt_choice ~ regularity * mode * item_type + regular_percent+
+          (1 | participant)+ (1 + item_num | participant), 
+        data = alt_modelled,
+        family = binomial,
+        control=glmerControl(optimizer="bobyqa",
+                             optCtrl=list(maxfun=2e5)))
+summary(full_interaction_alt_cortraining)
+check_collinearity(full_interaction_alt_cortraining)
+```
+
+### Compare different models
+```{r}
+anova(full_interaction_alt_cortraining, mode_type_alt_cortraining)
+anova(full_interaction_alt_cortraining, regularity_type_alt_cortraining)
+anova(full_interaction_alt_cortraining, regularity_mode_alt_cortraining)
+anova(full_interaction_alt_cortraining, no_interaction_alt_cortraining)
+```
+

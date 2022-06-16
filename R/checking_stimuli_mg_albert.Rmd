@@ -1,0 +1,179 @@
+---
+title: "checking_stimuli_mg"
+author: "Albert"
+date: '2022-06-13'
+output:
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    df_print: paged
+    code_folding: hide
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+# Pitch
+## Read in the pitch data
+
+```{r}
+pitch <- read_csv("result_pitch_multiple_generalisation.csv", 
+                  col_names = FALSE)
+colnames(pitch) <- 
+  c("ldl_project", "audio", "p_00", "p_05","p_10","p_15",
+    "p_20","p_25","p_30","p_35","p_40","p_45",
+    "p_50","p_55","p_60","p_65","p_70","p_75",
+    "p_80","p_85","p_90","p_95","p_100", "drop1")
+head(pitch)
+```
+
+## Define the cutting point
+
+```{r}
+set1_1 <- 35
+set1_2 <- 75
+
+set2_1 <- 30
+set2_2 <- 70
+```
+
+## Summarize and Transform the Data: cutting point set 1
+
+```{r}
+pitch_summary <- pitch %>%
+  select(-drop1) %>% 
+  pivot_longer(cols = starts_with("p", ignore.case = FALSE), 
+               names_to = c("pitch", "timepoint"), 
+               names_sep="_") %>% 
+  mutate(timepoint = as.numeric(timepoint)) %>% 
+  mutate(part = case_when(
+    timepoint <= set1_1~"first",
+    timepoint >= set1_1 & timepoint < set1_2~"second",
+    timepoint >= set1_2~"third")) %>% 
+  mutate(value = recode(
+    value, "--undefined--" = "deleteme")) %>% 
+  filter(!value =="deleteme") %>% 
+  mutate(value = as.numeric(value)) %>% 
+  select(ldl_project, audio, timepoint, value, part) %>% 
+  group_by(audio, part)  %>% 
+  group_by(audio, part) %>% 
+  mutate(n_point = n()) %>% 
+  mutate(average_pitch = sum(value)/n_point) %>% 
+  select(audio, part, n_point, average_pitch) %>% 
+  unique()%>% 
+  select(audio, average_pitch, part) %>% 
+  pivot_wider(names_from = part, values_from = average_pitch) %>% 
+  mutate(problematic = ifelse((first < second | first < third), "yes", "no")) %>% 
+  mutate(pitch_diff12 = first - second,
+         pitch_diff23 = second - third)
+# pitch_summary
+
+pitch_diff12 <- pitch_summary %>% 
+  ggplot()+
+  geom_col(aes(x = audio, y = pitch_diff12), fill = "skyblue")+
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())+
+  labs(
+    title = "Difference in Pitch Value between 1st and 2nd Part of Each Audio",
+    subtitle = "Albert"
+  )
+
+pitch_diff23 <- pitch_summary %>% 
+  ggplot()+
+  geom_col(aes(x = audio, y = pitch_diff23), fill = "skyblue")+
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())+
+  labs(
+    title = "Difference in Pitch Value between 2nd and 3rd Part of Each Audio",
+    subtitle = "Albert"
+  )
+
+print(pitch_diff12)
+print(pitch_diff23)
+```
+
+## Identify the Problem
+
+```{r}
+pitch_problem <- pitch_summary %>% 
+  mutate(problem = case_when(
+    first < second~"suspected_second_stress",
+    first < third~"suspected_final_stress"
+  )) %>% 
+  filter(problem == "suspected_second_stress") %>% 
+  mutate(pitch_diff = second - first) %>% 
+  arrange(desc(pitch_diff))
+pitch_problem
+```
+
+## Summarize and Transform the Data: cutting point set 2
+
+```{r}
+pitch_summary <- pitch %>%
+  select(-drop1) %>% 
+  pivot_longer(cols = starts_with("p", ignore.case = FALSE), 
+               names_to = c("pitch", "timepoint"), 
+               names_sep="_") %>% 
+  mutate(timepoint = as.numeric(timepoint)) %>% 
+  mutate(part = case_when(
+    timepoint <= set2_1~"first",
+    timepoint >= set2_1 & timepoint < set2_2~"second",
+    timepoint >= set2_2~"third")) %>% 
+  mutate(value = recode(
+    value, "--undefined--" = "deleteme")) %>% 
+  filter(!value =="deleteme") %>% 
+  mutate(value = as.numeric(value)) %>% 
+  select(ldl_project, audio, timepoint, value, part) %>% 
+  group_by(audio, part)  %>% 
+  group_by(audio, part) %>% 
+  mutate(n_point = n()) %>% 
+  mutate(average_pitch = sum(value)/n_point) %>% 
+  select(audio, part, n_point, average_pitch) %>% 
+  unique()%>% 
+  select(audio, average_pitch, part) %>% 
+  pivot_wider(names_from = part, values_from = average_pitch) %>% 
+  mutate(problematic = ifelse((first < second | first < third), "yes", "no")) %>% 
+  mutate(pitch_diff12 = first - second,
+         pitch_diff23 = second - third)
+# pitch_summary
+
+pitch_diff12 <- pitch_summary %>% 
+  ggplot()+
+  geom_col(aes(x = audio, y = pitch_diff12), fill = "skyblue")+
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())+
+  labs(
+    title = "Difference in Pitch Value between 1st and 2nd Part of Each Audio",
+    subtitle = "Albert"
+  )
+
+pitch_diff23 <- pitch_summary %>% 
+  ggplot()+
+  geom_col(aes(x = audio, y = pitch_diff23), fill = "skyblue")+
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_blank())+
+  labs(
+    title = "Difference in Pitch Value between 2nd and 3rd Part of Each Audio",
+    subtitle = "Albert"
+  )
+
+print(pitch_diff12)
+print(pitch_diff23)
+```
+
+## Identify the Problem
+
+```{r}
+pitch_problem <- pitch_summary %>% 
+  mutate(problem = case_when(
+    first < second~"suspected_second_stress",
+    first < third~"suspected_final_stress"
+  )) %>% 
+  filter(problem == "suspected_second_stress") %>% 
+  mutate(pitch_diff = second - first) %>% 
+  arrange(desc(pitch_diff))
+pitch_problem
+```
